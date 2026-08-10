@@ -1,0 +1,5 @@
+# Core packages specified in the Machine Learning for Health Lab 0 setup material.
+numpy
+matplotlib
+pandas
+scikit-learn
