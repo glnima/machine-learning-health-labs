@@ -1,149 +1,210 @@
 # -*- coding: utf-8 -*-
-# SUBSTITUTE np.nan VALUES IN THIS FILE
-import numpy as np
+"""Laboratory 3 - mole segmentation with K-Means, DBSCAN, smoothing, and Sobel."""
+from pathlib import Path
+from zipfile import ZipFile
+
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.cluster import DBSCAN
-import os
-import sys
-#%%
-folderpath = './moles/'
-files = os.listdir(folderpath)
-#%%
-plotfig = True
-np.set_printoptions(precision=2)# use only two decimal digits when printing numbers
-plt.close('all')# close previously opened pictures
-ifile = files.index('low_risk_4.jpg')
-filein=files[ifile] # file to be analyzed (low_risk, medium_risk or melanoma)
-print(filein)
-im_or = mpimg.imread(folderpath+filein)
-gray_image = np.mean(im_or, axis=2).astype(np.uint8)# convert to grayscale
-N1,N2,N3=im_or.shape # note: N3 is 3, the number of elementary colors, i.e. red, green ,blue
-N1,N2=gray_image.shape
-# im_or is Ndarray N1 x N2 x 3 unint8 (integers from 0 to 255)
-# gray_image is an Ndaaray N1 x N2 unint8 (integers from 0 to 255)
-# plot the images, to check them:
-plt.figure()
-plt.imshow(im_or,interpolation=None)
-plt.title('original image')
-plt.figure()
-plt.imshow(gray_image,cmap='gray', vmin=0, vmax=255,interpolation=None)
-plt.title('gray image')
-#%% get a simplified image with only Ncluster colors
-# number of clusters/quantized colors we want to have in the simpified image:
-Ncluster=3
-# instantiate the object K-means:
-kmeans = KMeans(n_clusters=Ncluster, random_state=0)
-# run K-means on the colors of the gray image (i.e. on the uint8 values):
-im_1D = gray_image.reshape((N1*N2,1))
-kmeans.fit(im_1D)
-# get the centroids (i.e. the 3 gray colors). Note that the centroids
-# take real values, we must convert these values to uint8
-# to properly see the quantized image
-Ncluster=len(kmeans.cluster_centers_)# Warning: it is possible that the found clusters is less than required
-kmeans_centroids=kmeans.cluster_centers_.astype('uint8')
-# copy im_1D into im_1D_quant and get the quantized image
-im_1D_quant = im_1D.copy()
-for kc in range(Ncluster):
-    im_1D_quant[(kmeans.labels_==kc),:]=kmeans_centroids[kc,:]# substitute the centroid value in the pixels that belong to the cluster
-im_quant=im_1D_quant.reshape((N1,N2))
-
-if plotfig:
-    plt.figure()
-    plt.imshow(im_quant,cmap='gray',interpolation=None)
-    plt.title('image with quantized colors (after K-Means')
-#%% Preliminary steps to find the contour after the clustering
-# 1: find the darkest color found by k-means, since the darkest color
-# corresponds to the mole:
-centroids=kmeans_centroids
-i_col=centroids.argmin() # darkest color corresponds to minimum grayscale value
-# 2: define the 2D-array im_clust where in position i,j you have the index of
-# the cluster pixel i,j belongs to 
-im_clust=kmeans.labels_.reshape(N1,N2)
-# 3: find the positions i,j where im_clust is equal to i_col (cluster with the darkest color)
-# the 2D Ndarray mole_pos stores the coordinates i,j only of the pixels
-# in cluster i_col
-mole_pos=np.argwhere(im_clust==i_col) # Ndarray with two columns, storing the index [i,j] of the dark pixels 
-#%% Find the likely position of the mole using DBSCAN
-epsilon = np.nan
-if np.isnan(epsilon):
-    print("SET AN APPROPRIATE VALUE FOR epsilon!")
-    sys.exit()
-M = np.nan
-if np.isnan(M):
-    print("SET AN APPROPRIATE VALUE FOR M!")
-    sys.exit()
-clusters= DBSCAN(eps=epsilon,min_samples=M,metric='euclidean').fit(mole_pos)  # fit DBSCAN on the positions of the dark pixels (closeby dark pixels will belong to the same cluster)
-id_clusters,count_id_clusters = np.unique(clusters.labels_,return_counts=True)# count the number of obtained clusters (i.e. groups of closeby dark pixels)
-print('Number of points in each cluster found by DBSCAN: ',count_id_clusters)
-print('Indexes of the found clusters: ',id_clusters)
-# select the clusters that could potentially correspond to the mole
-i_mole = np.nan
-if np.isnan(i_mole):
-    print("SET AN APPROPRIATE VALUE FOR i_mole (index of the cluster that contains the mole)!")
-    sys.exit()
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+from sklearn.cluster import DBSCAN, KMeans
 
 
-true_mole_pos = mole_pos[clusters.labels_==i_mole] # pixel indexes [i,j] in the cluster that corresponds to the mole
-im_only_mole_gray = 0*gray_image-1# white image
-x=true_mole_pos[:,0]
-y=true_mole_pos[:,1]
-im_only_mole_gray[x,y]=gray_image[x,y]
-if plotfig:
-    plt.figure()
-    plt.imshow(im_only_mole_gray,cmap='gray',interpolation=None)
-    plt.title('original size image, segmented grayscale mole (after DBSCAN)')
-im_mole_pos = np.ones((N1,N2),dtype='uint8')*255# white image
-im_mole_pos[x,y]=0 # black where the mole is present
-if plotfig:
-    plt.figure()
-    plt.imshow(im_mole_pos,cmap='gray',interpolation=None)
-    plt.title('original size image, mole position')
+# Change PROCESS_ALL_IMAGES to False and set IMAGE_NAME for an oral-exam run.
+PROCESS_ALL_IMAGES = True
+IMAGE_NAME = "low_risk_4.jpg"
+N_COLORS = 3
+FALLBACK_COLORS = 6  # used only if three colours merge the mole with a large shadow
+DBSCAN_EPS = 1.5       # joins horizontally, vertically, and diagonally adjacent dark pixels
+DBSCAN_MIN_SAMPLES = 5
+MIN_MOLE_PIXELS = 1_000
+MEDIAN_DELTA = 2       # a 5 x 5 median filter window
 
-#%% Find the cropped original image
-margin = np.nan # pixels around the mole (used for smoothing the image)
-if np.isnan(margin):
-    print("SET AN APPROPRIATE VALUE FOR margin!")
-    sys.exit()
-min_x = np.min(true_mole_pos[:,0])-margin
-max_x = np.max(true_mole_pos[:,0])+margin
-min_y = np.min(true_mole_pos[:,1])-margin
-max_y = np.max(true_mole_pos[:,1])+margin
-im_cropped_gray_red = im_only_mole_gray[min_x:max_x,min_y:max_y]
-im_cropped_col = im_or[min_x:max_x,min_y:max_y,:]
-im_cropped_mole_pos = im_mole_pos[min_x:max_x,min_y:max_y]
+LAB_DIR = Path(__file__).parent
+IMAGE_DIR = LAB_DIR / "moles"
+ZIP_FILE = LAB_DIR / "moles.zip"
+OUTPUT_DIR = LAB_DIR / "lab3_results"
 
-if plotfig:
-    plt.figure()
-    plt.imshow(im_cropped_mole_pos,cmap='gray',interpolation=None)
-    plt.title('cropped image, mole position')
 
-#%% Smooth the image
-delta = np.nan
-if np.isnan(delta):
-    print("SET AN APPROPRIATE VALUE FOR delta!")
-    sys.exit()
-N1,N2=im_cropped_mole_pos.shape
-im_cropped_mole_pos_filt = 0*im_cropped_mole_pos+255# white image
-for kr in range(delta,N1-delta):
-    for kc in range(delta,N2-delta):
-        sub = im_cropped_mole_pos[kr-delta:kr+delta,kc-delta:kc+delta]
-        im_cropped_mole_pos_filt[kr,kc] = np.median(sub)
-if plotfig:     
-    plt.figure()      
-    plt.imshow(im_cropped_mole_pos_filt,cmap='gray',interpolation=None)  
-    plt.title('smoothed cropped image, mole position')      
-  
+def ensure_images_available():
+    """Extract the supplied archive on first run, if needed."""
+    if not IMAGE_DIR.exists():
+        with ZipFile(ZIP_FILE) as archive:
+            archive.extractall(LAB_DIR)
 
-#%% Apply Sobel filters
-kern1 = np.array([[1,0,-1],[2,0,-2],[1,0,-1]])# Sobel filter
-kern2= kern1.T
-#%% get the border and plot the cropped color image and the border superimposed
-border = np.nan
-if np.isnan(border):
-    print("IMPLEMENT FILTERING WITH SOBEL FILTERS AND FIND THE BORDER")
-    sys.exit()
-plt.figure()
-plt.imshow(im_cropped_col, interpolation='none')
-plt.imshow(border,cmap='gray', interpolation='none', alpha=0.2)
+
+def get_image_files():
+    files = sorted(IMAGE_DIR.glob("*.jpg"))
+    # The archive also contains hue/saturation helper files, not mole photographs.
+    return [file for file in files if not file.stem.endswith(("_h", "_s"))]
+
+
+def choose_mole_cluster(pixel_positions, labels, image_shape):
+    """Choose a large compact DBSCAN component, preferring a central component on ties."""
+    image_center = np.asarray(image_shape) / 2
+    image_diagonal = np.linalg.norm(image_center)
+    candidates = []
+    for label in np.unique(labels):
+        if label == -1:
+            continue  # DBSCAN noise
+        points = pixel_positions[labels == label]
+        count = len(points)
+        if count < MIN_MOLE_PIXELS:
+            continue
+        center = points.mean(axis=0)
+        inertia = np.mean(np.sum((points - center) ** 2, axis=1))
+        central_distance = np.linalg.norm(center - image_center) / image_diagonal
+        # Large, compact components have high density; centrality resolves shadow ties.
+        score = (count / inertia) / (1 + central_distance)
+        candidates.append((score, label, count, inertia))
+    if not candidates:
+        raise RuntimeError("No DBSCAN component has at least 1000 pixels.")
+    _, label, count, inertia = max(candidates, key=lambda item: item[0])
+    return label, count, inertia
+
+
+def median_smooth(mask):
+    """Apply the requested median low-pass filter to a binary mole mask."""
+    padded = np.pad(mask.astype(np.uint8), MEDIAN_DELTA, constant_values=0)
+    windows = sliding_window_view(padded, (2 * MEDIAN_DELTA + 1,) * 2)
+    return np.median(windows, axis=(-2, -1)) >= 0.5
+
+
+def sobel_border(mask):
+    """Apply both Sobel filters manually and combine their magnitudes into a border."""
+    image = (mask.astype(np.int16) * 255)
+    padded = np.pad(image, 1, constant_values=0)
+    windows = sliding_window_view(padded, (3, 3))
+    kernel_x = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
+    kernel_y = kernel_x.T
+    filtered_x = np.sum(windows * kernel_x, axis=(-2, -1))
+    filtered_y = np.sum(windows * kernel_y, axis=(-2, -1))
+    magnitude = np.hypot(filtered_x, filtered_y)
+    return magnitude > 0
+
+
+def segment_mole(file_path):
+    """Segment one mole and return diagnostics needed for plots and the summary table."""
+    original = mpimg.imread(file_path)
+    grayscale = np.mean(original, axis=2).astype(np.uint8)
+    n_rows, n_cols = grayscale.shape
+    def cluster_darkest_pixels(n_colors):
+        kmeans = KMeans(n_clusters=n_colors, random_state=0, n_init=10).fit(
+            grayscale.reshape(-1, 1)
+        )
+        labels_image = kmeans.labels_.reshape(n_rows, n_cols)
+        darkest_label = int(np.argmin(kmeans.cluster_centers_.ravel()))
+        dark_positions = np.argwhere(labels_image == darkest_label)
+        dbscan_labels = DBSCAN(
+            eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, metric="euclidean"
+        ).fit_predict(dark_positions)
+        mole_label, mole_pixels, inertia = choose_mole_cluster(
+            dark_positions, dbscan_labels, grayscale.shape
+        )
+        return kmeans, labels_image, dark_positions, dbscan_labels, mole_label, mole_pixels, inertia
+
+    kmeans, labels_image, dark_positions, dbscan_labels, mole_label, mole_pixels, inertia = (
+        cluster_darkest_pixels(N_COLORS)
+    )
+    # In melanoma_27-like low-contrast images, three colour levels can merge the
+    # mole with background shadow. A finer fallback restores a compact component.
+    if mole_pixels > 75_000:
+        kmeans, labels_image, dark_positions, dbscan_labels, mole_label, mole_pixels, inertia = (
+            cluster_darkest_pixels(FALLBACK_COLORS)
+        )
+    positions = dark_positions[dbscan_labels == mole_label]
+    mask = np.zeros((n_rows, n_cols), dtype=bool)
+    mask[positions[:, 0], positions[:, 1]] = True
+
+    margin = 5
+    min_row = max(0, positions[:, 0].min() - margin)
+    max_row = min(n_rows, positions[:, 0].max() + margin + 1)
+    min_col = max(0, positions[:, 1].min() - margin)
+    max_col = min(n_cols, positions[:, 1].max() + margin + 1)
+    cropped_color = original[min_row:max_row, min_col:max_col]
+    cropped_mask = mask[min_row:max_row, min_col:max_col]
+    smoothed_mask = median_smooth(cropped_mask)
+    border = sobel_border(smoothed_mask)
+    return {
+        "original": original,
+        "grayscale": grayscale,
+        "quantized": kmeans.cluster_centers_[labels_image].squeeze(),
+        "cropped_color": cropped_color,
+        "cropped_mask": cropped_mask,
+        "smoothed_mask": smoothed_mask,
+        "border": border,
+        "mole_pixels": mole_pixels,
+        "inertia": inertia,
+        "dbscan_clusters": len(set(dbscan_labels)) - int(-1 in dbscan_labels),
+    }
+
+
+def save_example_plot(name, result):
+    """Save all intermediate stages and the final colour-plus-border overlay."""
+    figure, axes = plt.subplots(2, 3, figsize=(13, 8))
+    axes[0, 0].imshow(result["original"])
+    axes[0, 0].set_title("Original image")
+    axes[0, 1].imshow(result["grayscale"], cmap="gray", vmin=0, vmax=255)
+    axes[0, 1].set_title("Grayscale image")
+    axes[0, 2].imshow(result["quantized"], cmap="gray", vmin=0, vmax=255)
+    axes[0, 2].set_title("Three K-Means colours")
+    axes[1, 0].imshow(result["cropped_mask"], cmap="gray")
+    axes[1, 0].set_title("DBSCAN mole mask")
+    axes[1, 1].imshow(result["smoothed_mask"], cmap="gray")
+    axes[1, 1].set_title("Median-smoothed mask")
+    axes[1, 2].imshow(result["cropped_color"])
+    axes[1, 2].contour(result["border"], levels=[0.5], colors="red", linewidths=1)
+    axes[1, 2].set_title("Final Sobel border")
+    for axis in axes.flat:
+        axis.axis("off")
+    figure.suptitle(name)
+    figure.tight_layout()
+    figure.savefig(OUTPUT_DIR / f"{Path(name).stem}_pipeline.png", dpi=150)
+    plt.close(figure)
+
+
+def save_overview(results):
+    """Create a compact visual check that the same settings work on all 54 images."""
+    figure, axes = plt.subplots(6, 9, figsize=(15, 10))
+    for axis, (name, result) in zip(axes.flat, results.items()):
+        axis.imshow(result["cropped_color"])
+        axis.contour(result["border"], levels=[0.5], colors="red", linewidths=0.7)
+        axis.set_title(name, fontsize=7)
+        axis.axis("off")
+    figure.suptitle("Lab 3: Sobel borders for all 54 mole images")
+    figure.tight_layout()
+    figure.savefig(OUTPUT_DIR / "all_moles_border_overview.png", dpi=180)
+    plt.close(figure)
+
+
+def main():
+    ensure_images_available()
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    image_files = get_image_files()
+    if len(image_files) != 54:
+        raise RuntimeError(f"Expected 54 mole photographs, found {len(image_files)}.")
+    selected = image_files if PROCESS_ALL_IMAGES else [IMAGE_DIR / IMAGE_NAME]
+    results = {}
+    summary = []
+    for file_path in selected:
+        result = segment_mole(file_path)
+        results[file_path.name] = result
+        summary.append({
+            "image": file_path.name,
+            "mole_pixels": result["mole_pixels"],
+            "cluster_inertia": result["inertia"],
+            "dbscan_clusters": result["dbscan_clusters"],
+        })
+        save_example_plot(file_path.name, result)
+        print(f"{file_path.name}: {result['mole_pixels']} mole pixels")
+    if PROCESS_ALL_IMAGES:
+        save_overview(results)
+    import pandas as pd
+    pd.DataFrame(summary).to_csv(OUTPUT_DIR / "segmentation_summary.csv", index=False)
+    print(f"Processed {len(results)} image(s); outputs saved in {OUTPUT_DIR}")
+    if not PROCESS_ALL_IMAGES:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
