@@ -1,0 +1,9 @@
+model,evaluation,accuracy,TN,FP,FN,TP
+Decision tree (complete Xtrain),x_new (LLS),0.8882521489971347,150,0,39,160
+Decision tree (complete Xtrain),y_new (median),0.81,150,0,76,174
+"Random forest (100 trees, complete Xtrain)",x_new (LLS),0.9656160458452722,150,0,12,187
+"Random forest (100 trees, complete Xtrain)",y_new (median),0.855,150,0,58,192
+"Random forest (1000 trees, complete Xtrain)",x_new (LLS),0.9684813753581661,150,0,11,188
+"Random forest (1000 trees, complete Xtrain)",y_new (median),0.865,150,0,54,196
+"Random forest (1000 trees, 50/50 split)",y_new test (50%),1.0,78,0,0,122
+Decision tree (50/50 split),y_new test (50%),0.985,78,0,3,119
